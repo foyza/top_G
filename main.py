@@ -50,7 +50,7 @@ def get_main_keyboard():
     )
 
 # === DATA ===
-async def get_twelvedata(asset, interval="1h", count=50):
+async def get_twelvedata(asset, interval="1h", count=150):
     url = "https://api.twelvedata.com/time_series"
     params = {
         "symbol": asset,
