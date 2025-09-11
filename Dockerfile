@@ -1,30 +1,21 @@
-# Используем Python 3.11 slim
 FROM python:3.11-slim
 
-# Устанавливаем зависимости системы
-RUN apt-get update && apt-get install -y \
-    build-essential \
-    libpq-dev \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
-
-# Рабочая директория
+# Set workdir
 WORKDIR /app
 
-# Копируем requirements
+# Copy requirements
 COPY requirements.txt .
 
-# Обновляем pip и устанавливаем зависимости
+# Upgrade pip and install dependencies
 RUN pip install --upgrade pip setuptools wheel
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Копируем проект
+# Copy project
 COPY . .
 
-# ENV переменные (можно позже заменить .env)
-# ENV TELEGRAM_TOKEN=your_token
-# ENV TWELVEDATA_API_KEY=your_key
-# ENV NEWSAPI_KEY=your_news_key
+# Environment variables
+# TELEGRAM_TOKEN, TWELVEDATA_API_KEY, NEWSAPI_KEY
+ENV PYTHONUNBUFFERED=1
 
-# Запуск бота
+# Run bot
 CMD ["python", "main.py"]
