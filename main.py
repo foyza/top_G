@@ -4,14 +4,13 @@ import aiohttp
 import pandas as pd
 import numpy as np
 from aiogram import Bot, Dispatcher, types
-from aiogram.filters import CommandStart
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
+from aiogram.filters import CommandStart
 from aiogram.enums import ParseMode
 from sklearn.ensemble import GradientBoostingClassifier
 from sklearn.preprocessing import StandardScaler
 from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import LSTM, Dense, Dropout
-from tensorflow.keras.optimizers import Adam
+from tensorflow.keras.layers import LSTM, Dense
 from dotenv import load_dotenv
 import os
 import nltk
@@ -23,19 +22,19 @@ TOKEN = os.getenv("TELEGRAM_TOKEN")
 TWELVEDATA_API_KEY = os.getenv("TWELVEDATA_API_KEY")
 NEWSAPI_KEY = os.getenv("NEWSAPI_KEY")
 
-ASSETS = ["BTC/USD", "ETH/USD", "XAU/USD"]
+ASSETS = ['BTC/USD', 'XAU/USD', 'ETH/USD']
 
 logging.basicConfig(level=logging.INFO)
 
 dp = Dispatcher()
 bot = Bot(token=TOKEN, parse_mode=ParseMode.HTML)
 
-user_settings = {}  # {uid: {"asset": ..., "muted": False}}
+user_settings = {}  # {uid: {"asset": ... , "muted": False}}
 
-# === ML MODELS ===
+# === ML MODEL ===
 gb_model = GradientBoostingClassifier(n_estimators=300, learning_rate=0.05, max_depth=4, random_state=42)
-scaler = StandardScaler()
 lstm_model = None
+scaler = StandardScaler()
 ml_trained = False
 
 # === NLP ===
@@ -47,16 +46,21 @@ def get_main_keyboard():
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="🔄 Получить сигнал")],
-            [KeyboardButton(text="BTC/USD"), KeyboardButton(text="ETH/USD"), KeyboardButton(text="XAU/USD")],
+            [KeyboardButton(text="BTC/USD"), KeyboardButton(text="XAU/USD"), KeyboardButton(text="ETH/USD")],
             [KeyboardButton(text="🔕 Mute"), KeyboardButton(text="🔔 Unmute")]
         ],
         resize_keyboard=True
     )
 
 # === DATA ===
-async def get_twelvedata(asset, interval="1h", count=300):
+async def get_twelvedata(asset, interval="1h", count=150):
     url = "https://api.twelvedata.com/time_series"
-    params = {"symbol": asset, "interval": interval, "outputsize": count, "apikey": TWELVEDATA_API_KEY}
+    params = {
+        "symbol": asset,
+        "interval": interval,
+        "outputsize": count,
+        "apikey": TWELVEDATA_API_KEY,
+    }
     async with aiohttp.ClientSession() as session:
         async with session.get(url, params=params) as response:
             data = await response.json()
@@ -66,12 +70,18 @@ async def get_twelvedata(asset, interval="1h", count=300):
             df["datetime"] = pd.to_datetime(df["datetime"])
             df = df.sort_values("datetime")
             for col in ["open", "high", "low", "close", "volume"]:
-                df[col] = pd.to_numeric(df[col])
+                if col in df.columns:
+                    df[col] = pd.to_numeric(df[col])
             return df
 
 async def get_news_sentiment(asset):
-    query_map = {"BTC/USD": "bitcoin ETF regulation", "ETH/USD": "ethereum upgrade regulation", "XAU/USD": "gold inflation FED"}
-    query = query_map.get(asset, "crypto")
+    # Фильтруем только сильные новости: ETF, регуляторы, макростатистика
+    query_map = {
+        "BTC": "bitcoin (ETF OR regulation OR macro)",
+        "XAU": "gold (ETF OR regulation OR macro)",
+        "ETH": "ethereum (ETF OR regulation OR macro)"
+    }
+    query = query_map.get(asset.split("/")[0], asset)
     url = f"https://newsapi.org/v2/everything?q={query}&sortBy=publishedAt&apiKey={NEWSAPI_KEY}&language=en"
     async with aiohttp.ClientSession() as session:
         async with session.get(url) as r:
@@ -81,8 +91,7 @@ async def get_news_sentiment(asset):
             scores = []
             for art in data["articles"][:5]:
                 text = art.get("title", "") + " " + art.get("description", "")
-                if any(word in text.lower() for word in ["etf", "sec", "federal reserve", "inflation", "ban", "approve"]):
-                    scores.append(sia.polarity_scores(text)["compound"])
+                scores.append(sia.polarity_scores(text)["compound"])
             return float(np.mean(scores)) if scores else 0
 
 # === INDICATORS ===
@@ -96,27 +105,28 @@ def compute_rsi(series, period=14):
     return 100 - (100 / (1 + rs))
 
 def compute_macd(series):
-    ema12 = series.ewm(span=12).mean()
-    ema26 = series.ewm(span=26).mean()
+    ema12 = series.ewm(span=12, adjust=False).mean()
+    ema26 = series.ewm(span=26, adjust=False).mean()
     return ema12 - ema26
 
 def compute_atr(df, period=14):
     high_low = df["high"] - df["low"]
-    high_close = (df["high"] - df["close"].shift()).abs()
-    low_close = (df["low"] - df["close"].shift()).abs()
-    ranges = pd.concat([high_low, high_close, low_close], axis=1)
-    true_range = ranges.max(axis=1)
-    return true_range.rolling(period).mean()
+    high_close = np.abs(df["high"] - df["close"].shift())
+    low_close = np.abs(df["low"] - df["close"].shift())
+    tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
+    return tr.rolling(period).mean()
 
 def compute_obv(df):
+    if "volume" not in df.columns:
+        return pd.Series(np.zeros(len(df)))
     obv = (np.sign(df["close"].diff()) * df["volume"]).fillna(0).cumsum()
     return obv
 
-def compute_bollinger(series, window=20):
-    sma = series.rolling(window).mean()
-    std = series.rolling(window).std()
-    upper = sma + 2 * std
-    lower = sma - 2 * std
+def compute_bollinger(df, period=20):
+    sma = df["close"].rolling(period).mean()
+    std = df["close"].rolling(period).std()
+    upper = sma + 2*std
+    lower = sma - 2*std
     return upper, lower
 
 def add_indicators(df):
@@ -127,69 +137,61 @@ def add_indicators(df):
     df["macd"] = compute_macd(df["close"])
     df["atr"] = compute_atr(df)
     df["obv"] = compute_obv(df)
-    df["bb_upper"], df["bb_lower"] = compute_bollinger(df["close"])
-    return df.dropna()
+    df["bb_upper"], df["bb_lower"] = compute_bollinger(df)
+    df = df.dropna()
+    return df
 
 # === ML TRAINING ===
 async def train_models(asset="BTC/USD"):
-    global ml_trained, gb_model, scaler, lstm_model
+    global ml_trained, gb_model, lstm_model, scaler
     df = await get_twelvedata(asset, count=500)
     if df is None: return
     df = add_indicators(df)
     df["target"] = (df["close"].shift(-3) > df["close"]).astype(int)
-
-    features = df[["ema10", "ema50", "rsi", "macd", "atr", "obv"]].iloc[:-3]
-    labels = df["target"].iloc[:-3]
-    X = scaler.fit_transform(features)
-    y = labels
-    gb_model.fit(X, y)
-
-    X_seq = features.values.reshape((features.shape[0], 1, features.shape[1]))
-    lstm_model = Sequential([
-        LSTM(64, input_shape=(X_seq.shape[1], X_seq.shape[2]), return_sequences=False),
-        Dropout(0.2),
-        Dense(32, activation="relu"),
-        Dense(1, activation="sigmoid")
-    ])
-    lstm_model.compile(optimizer=Adam(learning_rate=0.001), loss="binary_crossentropy", metrics=["accuracy"])
-    lstm_model.fit(X_seq, y, epochs=5, batch_size=16, verbose=0)
-
+    features = ["ema10","ema50","rsi","macd","atr","obv","bb_upper","bb_lower"]
+    X = df[features].iloc[:-3]
+    y = df["target"].iloc[:-3]
+    X_scaled = scaler.fit_transform(X)
+    gb_model.fit(X_scaled, y)
+    
+    # Простая LSTM
+    lstm_model = Sequential()
+    lstm_model.add(LSTM(50, input_shape=(X_scaled.shape[1],1)))
+    lstm_model.add(Dense(1, activation='sigmoid'))
+    lstm_model.compile(loss='binary_crossentropy', optimizer='adam')
+    lstm_model.fit(X_scaled.reshape((X_scaled.shape[0], X_scaled.shape[1],1)), y, epochs=5, batch_size=16, verbose=0)
+    
     ml_trained = True
-    logging.info("✅ ML модели обучены")
+    logging.info("✅ ML + LSTM модели обучены")
 
 def ml_predict(latest_row):
     if not ml_trained:
         return "neutral", 50
-    X = np.array([[latest_row["ema10"], latest_row["ema50"], latest_row["rsi"], latest_row["macd"], latest_row["atr"], latest_row["obv"]]])
+    features = ["ema10","ema50","rsi","macd","atr","obv","bb_upper","bb_lower"]
+    X = np.array([[latest_row[f] for f in features]])
     X_scaled = scaler.transform(X)
-    prob_gb = gb_model.predict_proba(X_scaled)[0][1]
-    prob_lstm = float(lstm_model.predict(X_scaled.reshape((1, 1, X.shape[1])), verbose=0)[0][0])
-    prob = (prob_gb + prob_lstm) / 2
-    if prob > 0.6:
-        return "buy", int(prob*100)
-    elif prob < 0.4:
-        return "sell", int((1-prob)*100)
+    gb_prob = gb_model.predict_proba(X_scaled)[0][1]
+    lstm_prob = lstm_model.predict(X_scaled.reshape((1,X_scaled.shape[1],1)), verbose=0)[0][0]
+    avg_prob = (gb_prob + lstm_prob)/2
+    if avg_prob > 0.55:
+        return "buy", int(avg_prob*100)
+    elif avg_prob < 0.45:
+        return "sell", int((1-avg_prob)*100)
     return "neutral", 50
 
 # === SIGNAL ===
 async def send_signal(uid, asset):
-    df_h1 = await get_twelvedata(asset, interval="1h")
-    df_h4 = await get_twelvedata(asset, interval="4h")
-    if df_h1 is None or df_h4 is None:
+    df = await get_twelvedata(asset)
+    if df is None or len(df) < 50:
         await bot.send_message(uid, f"⚠️ Нет данных для {asset}")
         return
-    df_h1 = add_indicators(df_h1)
-    df_h4 = add_indicators(df_h4)
-
-    dir_ml, acc_ml = ml_predict(df_h1.iloc[-1])
-    dir_h4, acc_h4 = ml_predict(df_h4.iloc[-1])
-
-    if dir_ml != dir_h4:  # фильтр по старшему ТФ
-        direction, accuracy = "neutral", 50
-    else:
-        direction, accuracy = dir_ml, acc_ml
-
+    df = add_indicators(df)
+    dir_ml, acc_ml = ml_predict(df.iloc[-1])
     news_score = await get_news_sentiment(asset)
+
+    # Комбинируем ML и новости
+    direction = dir_ml
+    accuracy = acc_ml
     if news_score > 0.2 and direction != "sell":
         direction = "buy"
         accuracy = min(100, accuracy + 10)
@@ -197,16 +199,11 @@ async def send_signal(uid, asset):
         direction = "sell"
         accuracy = min(100, accuracy + 10)
 
-    price = df_h1["close"].iloc[-1]
-    atr = df_h1["atr"].iloc[-1]
-    if direction == "buy":
-        tp_price = round(price + 2 * atr, 2)
-        sl_price = round(price - 1.5 * atr, 2)
-    elif direction == "sell":
-        tp_price = round(price - 2 * atr, 2)
-        sl_price = round(price + 1.5 * atr, 2)
-    else:
-        tp_price, sl_price = price, price
+    price = df["close"].iloc[-1]
+    # Умные TP/SL через ATR
+    atr = df["atr"].iloc[-1]
+    tp_price = round(price + atr*2 if direction=="buy" else price - atr*2,2)
+    sl_price = round(price - atr if direction=="buy" else price + atr,2)
 
     msg = f"📢 Сигнал для <b>{asset}</b>\nНаправление: <b>{direction.upper()}</b>\nЦена: {price}\n🟢 TP: {tp_price}\n🔴 SL: {sl_price}\n📊 Точность: {accuracy}%\n📰 Новости: {'позитив' if news_score>0 else 'негатив' if news_score<0 else 'нейтрально'}"
     muted = user_settings.get(uid, {}).get("muted", False)
@@ -216,7 +213,7 @@ async def send_signal(uid, asset):
 @dp.message(CommandStart())
 async def start(message: types.Message):
     user_settings[message.from_user.id] = {"asset": "BTC/USD", "muted": False}
-    await message.answer("🚀 Trading Bot запущен!", reply_markup=get_main_keyboard())
+    await message.answer("Escape the matrix", reply_markup=get_main_keyboard())
 
 @dp.message()
 async def handle_buttons(message: types.Message):
