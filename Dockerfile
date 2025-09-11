@@ -1,18 +1,21 @@
 FROM python:3.11-slim
 
-# Системные зависимости для LightGBM и aiohttp
-RUN apt-get update && apt-get install -y build-essential libgomp1 git && rm -rf /var/lib/apt/lists/*
+# system deps often required by scientific packages and for TF wheel
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    libgomp1 \
+    curl \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# Копируем и устанавливаем зависимости
 COPY requirements.txt .
-RUN pip install --upgrade pip
+RUN pip install --upgrade pip setuptools wheel
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Копируем проект
+# Copy project
 COPY . .
 
-# Запуск бота
+# Expose nothing; bot is long-running
 CMD ["python", "main.py"]
-
