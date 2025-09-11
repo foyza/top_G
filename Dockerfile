@@ -1,13 +1,12 @@
 FROM python:3.11-slim
 
+# Установим зависимости для сборки некоторых пакетов
 RUN apt-get update && apt-get install -y \
     build-essential \
-    libhdf5-dev \
-    libssl-dev \
-    libffi-dev \
-    python3-dev \
-    git \
+    wget \
     curl \
+    git \
+    libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
