@@ -198,7 +198,7 @@ async def send_signal(uid, asset):
 @dp.message(CommandStart())
 async def start(message: types.Message):
     user_settings[message.from_user.id] = {"asset":"BTC/USD","muted":False}
-    await message.answer("Бот запущен ✅",reply_markup=get_main_keyboard())
+    await message.answer("Escape the matrix.",reply_markup=get_main_keyboard())
 
 @dp.message()
 async def handle_buttons(message: types.Message):
