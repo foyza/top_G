@@ -43,11 +43,13 @@ sia = SentimentIntensityAnalyzer()
 def get_main_keyboard():
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton("🔄 Получить сигнал")],
-            [KeyboardButton("BTC/USD"), KeyboardButton("XAU/USD"), KeyboardButton("ETH/USD")],
-            [KeyboardButton("🔕 Mute"), KeyboardButton("🔔 Unmute")]
-        ], resize_keyboard=True
+            [KeyboardButton(text="🔄 Получить сигнал")],
+            [KeyboardButton(text="BTC/USD"), KeyboardButton(text="XAU/USD"), KeyboardButton(text="ETH/USD")],
+            [KeyboardButton(text="🔕 Mute"), KeyboardButton(text="🔔 Unmute")]
+        ], 
+        resize_keyboard=True
     )
+
 
 # === DATA ===
 async def get_twelvedata(asset, interval="1h", count=150):
