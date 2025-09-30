@@ -1,21 +1,41 @@
+# Базовый образ Python
 FROM python:3.11-slim
 
-# Set workdir
-WORKDIR /app
+# Установим системные зависимости (для numpy, pandas, sklearn, tensorflow, nltk и т.д.)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    gcc \
+    g++ \
+    libffi-dev \
+    libssl-dev \
+    libxml2 \
+    libxml2-dev \
+    libxslt1-dev \
+    zlib1g-dev \
+    wget \
+    curl \
+    git \
+    && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements
+# Установим pip и обновим его
+RUN pip install --upgrade pip setuptools wheel
+
+# Скопируем requirements.txt
 COPY requirements.txt .
 
-# Upgrade pip and install dependencies
-RUN pip install --upgrade pip setuptools wheel
+# Установим Python-зависимости
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy project
+# Скачаем данные для nltk (например, токенайзер и стоп-слова)
+RUN python -m nltk.downloader punkt stopwords
+
+# Копируем весь проект в контейнер
+WORKDIR /app
 COPY . .
 
-# Environment variables
-# TELEGRAM_TOKEN, TWELVEDATA_API_KEY, NEWSAPI_KEY
+# Укажем переменные окружения
 ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
 
-# Run bot
+# Запуск бота
 CMD ["python", "main.py"]
